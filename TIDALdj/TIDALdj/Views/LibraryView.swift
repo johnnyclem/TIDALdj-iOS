@@ -17,7 +17,7 @@ struct LibraryView: View {
                 }
 
                 if !viewModel.playlists.isEmpty {
-                    Section("Playlists") {
+                    Section(viewModel.playlistSectionTitle) {
                         ForEach(viewModel.playlists) { playlist in
                             Button {
                                 Task { await viewModel.loadTracks(for: playlist) }
@@ -39,7 +39,7 @@ struct LibraryView: View {
                 }
 
                 if !viewModel.tracks.isEmpty {
-                    Section("Tracks") {
+                    Section(viewModel.tracksSectionTitle) {
                         ForEach(viewModel.tracks) { track in
                             trackMenu(for: track)
                         }
@@ -51,6 +51,8 @@ struct LibraryView: View {
                     ProgressView()
                 } else if let message = viewModel.errorMessage {
                     ContentUnavailableView("Unable to load library", systemImage: "exclamationmark.triangle", description: Text(message))
+                } else if viewModel.isShowingSearchResults && viewModel.playlists.isEmpty && viewModel.tracks.isEmpty {
+                    ContentUnavailableView("No results", systemImage: "magnifyingglass", description: Text("Try a different search query."))
                 } else if viewModel.playlists.isEmpty && viewModel.tracks.isEmpty {
                     ContentUnavailableView("No content", systemImage: "music.note", description: Text("Use search to find tracks."))
                 }
@@ -68,6 +70,7 @@ struct LibraryView: View {
                     Button("Search") {
                         Task { await viewModel.performSearch() }
                     }
+                    .disabled(viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
