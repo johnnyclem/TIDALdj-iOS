@@ -9,7 +9,26 @@ actor AudioEngine {
     }
 
     private let engine = AVAudioEngine()
-    private var deckStates: [DeckID: DeckState] = [.deckA: .empty, .deckB: .empty]
+    private var deckAState: DeckState = .empty
+    private var deckBState: DeckState = .empty
+
+    private func getState(for deck: DeckID) -> DeckState {
+        switch deck {
+        case .deckA:
+            return deckAState
+        case .deckB:
+            return deckBState
+        }
+    }
+
+    private func setState(_ state: DeckState, for deck: DeckID) {
+        switch deck {
+        case .deckA:
+            deckAState = state
+        case .deckB:
+            deckBState = state
+        }
+    }
 
     init() {
         Task { [weak self] in
@@ -30,7 +49,7 @@ actor AudioEngine {
     }
 
     func loadTrack(deck: DeckID, track: Track) async throws {
-        deckStates[deck] = .loaded(track)
+        setState(.loaded(track), for: deck)
     }
 
     func play(deck: DeckID) async {
@@ -55,9 +74,11 @@ actor AudioEngine {
     }
 
     func track(for deck: DeckID) -> Track? {
-        guard case let .loaded(track) = deckStates[deck] else {
-            return nil
+        let state = getState(for: deck)
+        if case let .loaded(track) = state {
+            return track
         }
-        return track
+        return nil
     }
 }
+

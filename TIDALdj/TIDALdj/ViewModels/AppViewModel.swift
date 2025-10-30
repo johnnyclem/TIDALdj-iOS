@@ -6,7 +6,7 @@ import UIKit
 internal import Combine
 
 @MainActor
-final class AppViewModel: ObservableObject {
+final class AppViewModel: NSObject, ObservableObject {
     
     @Published var isAuthenticated = false
     @Published var isPresentingLibrary = false
@@ -107,12 +107,21 @@ extension AppViewModel {
 }
 
 extension AppViewModel: ASWebAuthenticationPresentationContextProviding {
-    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+    @MainActor
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
 #if canImport(UIKit)
+        if #available(iOS 26.0, *) {
+            if let scene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first {
+                return ASPresentationAnchor(windowScene: scene)
+            }
+        }
+        // Fallback for iOS versions prior to 26.0 (or if no scene was found)
         return UIApplication.shared.connectedScenes
             .compactMap { $0 as? UIWindowScene }
             .flatMap { $0.windows }
-            .first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
+            .first ?? ASPresentationAnchor()
 #else
         return ASPresentationAnchor()
 #endif

@@ -1,6 +1,6 @@
 import Foundation
 
-enum DeckID: Hashable {
+enum DeckID {
     case deckA
     case deckB
 
@@ -13,3 +13,5 @@ enum DeckID: Hashable {
         }
     }
 }
+
+nonisolated extension DeckID: Hashable {}

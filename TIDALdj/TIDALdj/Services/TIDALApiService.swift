@@ -152,7 +152,7 @@ actor TIDALApiService {
         let items: [Item]
     }
 
-    private struct TrackResponse: Decodable {
+    internal struct TrackResponse: Decodable {
         struct Artist: Decodable {
             let name: String
         }
@@ -192,7 +192,7 @@ actor TIDALApiService {
         }
     }
 
-    private struct PlaylistResponse: Decodable {
+    struct PlaylistResponse: Decodable {
         let uuid: String
         let title: String
         let numberOfTracks: Int
@@ -209,7 +209,7 @@ actor TIDALApiService {
         let playlists: PagedResponse<PlaylistResponse>?
     }
 
-    private struct PKCE {
+    struct PKCE {
         let verifier: String
         let challenge: String
         let state: String
@@ -222,7 +222,11 @@ actor TIDALApiService {
 
             let verifierData = Data(verifier.utf8)
             let challengeData = Data(SHA256.hash(data: verifierData))
-            challenge = challengeData.base64URLEncodedString()
+            
+            challenge = challengeData.base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
             state = UUID().uuidString
         }
     }
@@ -403,13 +407,11 @@ actor TIDALApiService {
                 }
                 session.presentationContextProvider = presentationContextProvider
                 session.prefersEphemeralWebBrowserSession = true
-                if let strongSelf = self {
-                    await strongSelf.storeAuthSession(session)
-                }
+                
+                await storeAuthSession(session)
+
                 if session.start() == false {
-                    if let strongSelf = self {
-                        await strongSelf.clearAuthSession(cancel: true)
-                    }
+                    await clearAuthSession(cancel: true)
                     continuation.resume(throwing: ServiceError.invalidResponse)
                 }
             }
@@ -593,7 +595,7 @@ private extension Array where Element == URLQueryItem {
     }
 }
 
-private extension Data {
+public extension Data {
     func base64URLEncodedString() -> String {
         let base64 = self.base64EncodedString()
         return base64
