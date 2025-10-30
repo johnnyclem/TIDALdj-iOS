@@ -1,61 +1,32 @@
-//
-//  ContentView.swift
-//  TIDALdj
-//
-//  Created by John Clem on 10/29/25.
-//
-
 import SwiftUI
-import SwiftData
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @StateObject private var viewModel: AppViewModel
+
+    init(viewModel: @autoclosure @escaping () -> AppViewModel = AppViewModel.preview()) {
+        _viewModel = StateObject(wrappedValue: viewModel())
+    }
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        Group {
+            if viewModel.isAuthenticated {
+                DJView(appViewModel: viewModel)
+                    .sheet(isPresented: $viewModel.isPresentingLibrary) {
+                        LibraryView(
+                            viewModel: viewModel.libraryViewModel,
+                            preferredDeck: viewModel.selectedDeck
+                        ) { track, deck in
+                            viewModel.handleTrackSelection(track, deck: deck)
+                        }
                     }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        } detail: {
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
+            } else {
+                AuthenticationView(viewModel: viewModel)
             }
         }
+        .animation(.easeInOut, value: viewModel.isAuthenticated)
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
 }
