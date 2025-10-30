@@ -1,4 +1,8 @@
 import Foundation
+import AuthenticationServices
+#if canImport(UIKit)
+import UIKit
+#endif
 internal import Combine
 
 @MainActor
@@ -13,6 +17,9 @@ final class AppViewModel: ObservableObject {
             Task { await audioEngine.setCrossfader(position: position) }
         }
     }
+    @Published var userProfile: UserProfile?
+    @Published var isAuthenticating = false
+    @Published var authenticationError: String?
 
     let apiService: TIDALApiService
     let audioEngine: AudioEngine
@@ -29,18 +36,37 @@ final class AppViewModel: ObservableObject {
     }
 
     func signIn() {
-        Task {
-            await apiService.updateTokens(access: "mock_access_token", refresh: "mock_refresh_token")
-            isAuthenticated = true
-            await libraryViewModel.refreshPlaylists()
+        guard !isAuthenticating else { return }
+        isAuthenticating = true
+        authenticationError = nil
+
+        Task { @MainActor in
+            do {
+                let profile = try await apiService.authenticate(presentationContextProvider: self)
+                userProfile = profile
+                isAuthenticated = true
+                await libraryViewModel.refreshPlaylists()
+            } catch {
+                if case TIDALApiService.ServiceError.authenticationCancelled = error {
+                    authenticationError = nil
+                } else {
+                    authenticationError = error.localizedDescription
+                }
+                isAuthenticated = false
+            }
+            isAuthenticating = false
         }
     }
 
     func signOut() {
-        Task { await apiService.clearTokens() }
+        Task { await apiService.signOut() }
         isAuthenticated = false
         isPresentingLibrary = false
         selectedDeck = nil
+        userProfile = nil
+        authenticationError = nil
+        isAuthenticating = false
+        libraryViewModel.reset()
         deckAViewModel.reset()
         deckBViewModel.reset()
     }
@@ -49,6 +75,7 @@ final class AppViewModel: ObservableObject {
         selectedDeck = deck
         libraryViewModel.searchQuery = ""
         libraryViewModel.tracks = []
+        Task { await libraryViewModel.performSearch() }
         isPresentingLibrary = true
     }
 
@@ -75,6 +102,19 @@ final class AppViewModel: ObservableObject {
 
 extension AppViewModel {
     static func preview() -> AppViewModel {
-        AppViewModel(apiService: TIDALApiService(), audioEngine: AudioEngine())
+        AppViewModel(apiService: TIDALApiService(configuration: .preview), audioEngine: AudioEngine())
+    }
+}
+
+extension AppViewModel: ASWebAuthenticationPresentationContextProviding {
+    nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+#if canImport(UIKit)
+        return UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
+#else
+        return ASPresentationAnchor()
+#endif
     }
 }

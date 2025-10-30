@@ -14,11 +14,24 @@ struct AuthenticationView: View {
             Text("Sign in with your TIDAL account to continue.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+            if let message = viewModel.authenticationError {
+                Text(message)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
             Button(action: viewModel.signIn) {
-                Label("Sign in with TIDAL", systemImage: "person.crop.circle")
-                    .padding(.horizontal, 32)
+                if viewModel.isAuthenticating {
+                    ProgressView()
+                        .tint(.white)
+                        .padding(.horizontal, 32)
+                } else {
+                    Label("Sign in with TIDAL", systemImage: "person.crop.circle")
+                        .padding(.horizontal, 32)
+                }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(viewModel.isAuthenticating)
             Spacer()
         }
         .padding()
