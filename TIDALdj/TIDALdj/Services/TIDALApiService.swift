@@ -41,7 +41,7 @@ actor TIDALApiService {
 
     func createPlaylist(name: String) async throws -> Playlist {
         // Placeholder implementation until SDK integration is completed.
-        return Playlist(id: UUID().uuidString, name: name, trackCount: 0)
+        return await Playlist(id: UUID().uuidString, name: name, trackCount: 0)
     }
 
     func addTrackToPlaylist(trackId: String, playlistId: String) async throws {

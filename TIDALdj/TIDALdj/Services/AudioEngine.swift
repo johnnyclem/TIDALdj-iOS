@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+internal import Combine
 
 actor AudioEngine {
     enum DeckState {
@@ -11,7 +12,9 @@ actor AudioEngine {
     private var deckStates: [DeckID: DeckState] = [.deckA: .empty, .deckB: .empty]
 
     init() {
-        configureAudioGraph()
+        Task { [weak self] in
+            await self?.configureAudioGraph()
+        }
     }
 
     private func configureAudioGraph() {

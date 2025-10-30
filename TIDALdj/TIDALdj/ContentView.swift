@@ -1,10 +1,16 @@
 import SwiftUI
+internal import Combine
 
+@MainActor
 struct ContentView: View {
     @StateObject private var viewModel: AppViewModel
 
-    init(viewModel: @autoclosure @escaping () -> AppViewModel = AppViewModel.preview()) {
+    init(viewModel: @autoclosure @escaping () -> AppViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel())
+    }
+
+    init() {
+        _viewModel = StateObject(wrappedValue: AppViewModel.preview())
     }
 
     var body: some View {

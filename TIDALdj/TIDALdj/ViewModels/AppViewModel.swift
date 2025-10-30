@@ -1,7 +1,9 @@
 import Foundation
+internal import Combine
 
 @MainActor
 final class AppViewModel: ObservableObject {
+    
     @Published var isAuthenticated = false
     @Published var isPresentingLibrary = false
     @Published var selectedDeck: DeckID?

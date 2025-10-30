@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+internal import Combine
 
 @MainActor
 final class DeckViewModel: ObservableObject {
