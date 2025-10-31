@@ -14,11 +14,9 @@ actor TIDALApiService {
         let apiBaseURL: URL
 
         static let defaultScopes: [String] = [
+            "user.read",
             "collection.read",
-            "search.read",
             "playlists.read",
-            "entitlements.read",
-            "playback",
             "recommendations.read"
         ]
 
@@ -28,13 +26,13 @@ actor TIDALApiService {
                 preconditionFailure("Missing TIDAL client identifier (Info.plist key \(InfoKey.clientID)).")
             }
 
-            guard let clientSecret = Bundle.main.object(forInfoDictionaryKey: InfoKey.clientSecret) as? String,
-                  !clientSecret.isEmpty else {
-                preconditionFailure("Missing TIDAL client secret (Info.plist key \(InfoKey.clientSecret)).")
-            }
+
+            // For PKCE on a native app, a client secret is not required; make it optional.
+            let clientSecret = (Bundle.main.object(forInfoDictionaryKey: InfoKey.clientSecret) as? String) ?? ""
+
 
             let redirectString = (Bundle.main.object(forInfoDictionaryKey: InfoKey.redirectURI) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let redirectURI = URL(string: redirectString ?? "tidaldj://auth-callback")
+            let redirectURI = URL(string: redirectString ?? "tidaldj://preview")
             precondition(redirectURI != nil, "Invalid redirect URI. Update Info.plist key \(InfoKey.redirectURI).")
 
             return Configuration(
@@ -42,7 +40,7 @@ actor TIDALApiService {
                 clientSecret: clientSecret,
                 redirectURI: redirectURI!,
                 scopes: defaultScopes,
-                authorizationURL: URL(string: "https://auth.tidal.com/v1/oauth2/authorize")!,
+                authorizationURL: URL(string: "https://login.tidal.com/authorize")!,
                 tokenURL: URL(string: "https://auth.tidal.com/v1/oauth2/token")!,
                 revokeURL: URL(string: "https://auth.tidal.com/v1/oauth2/revoke")!,
                 apiBaseURL: URL(string: "https://openapi.tidal.com/v1")!
@@ -60,7 +58,7 @@ actor TIDALApiService {
             clientSecret: "preview",
             redirectURI: URL(string: "tidaldj://preview")!,
             scopes: defaultScopes,
-            authorizationURL: URL(string: "https://auth.tidal.com/v1/oauth2/authorize")!,
+            authorizationURL: URL(string: "https://login.tidal.com/authorize")!,
             tokenURL: URL(string: "https://auth.tidal.com/v1/oauth2/token")!,
             revokeURL: URL(string: "https://auth.tidal.com/v1/oauth2/revoke")!,
             apiBaseURL: URL(string: "https://openapi.tidal.com/v1")!
@@ -214,7 +212,7 @@ actor TIDALApiService {
         let challenge: String
         let state: String
 
-        init(length: Int = 64) {
+        init(length: Int = 64) async {
             let charset = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~")
             var generator = SystemRandomNumberGenerator()
             let verifierCharacters = (0..<length).compactMap { _ in charset.randomElement(using: &generator) }
@@ -222,11 +220,7 @@ actor TIDALApiService {
 
             let verifierData = Data(verifier.utf8)
             let challengeData = Data(SHA256.hash(data: verifierData))
-            
-            challenge = challengeData.base64EncodedString()
-                .replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
+            challenge = await MainActor.run { challengeData.base64URLEncodedString() }
             state = UUID().uuidString
         }
     }
@@ -246,7 +240,7 @@ actor TIDALApiService {
     // MARK: - Authentication
 
     func authenticate(presentationContextProvider: ASWebAuthenticationPresentationContextProviding) async throws -> UserProfile {
-        let pkce = PKCE()
+        let pkce = await PKCE()
 
         let authorizationURL = try makeAuthorizationURL(using: pkce)
         let callbackURL = try await startAuthenticationSession(
@@ -274,7 +268,7 @@ actor TIDALApiService {
                 URLQueryItem(name: "client_id", value: configuration.clientID),
                 URLQueryItem(name: "client_secret", value: configuration.clientSecret)
             ]
-            request.httpBody = bodyItems.percentEncoded()
+            request.httpBody = await bodyItems.percentEncoded()
             _ = try? await urlSession.data(for: request)
         }
 
@@ -298,12 +292,14 @@ actor TIDALApiService {
 
         let request = try await authorizedRequest(url: url)
         let response: PagedResponse<PlaylistResponse> = try await perform(request)
-        return response.items.map { playlist in
-            Playlist(
-                id: playlist.uuid,
-                name: playlist.title,
-                trackCount: playlist.numberOfTracks
-            )
+        return await MainActor.run {
+            response.items.map { playlist in
+                Playlist(
+                    id: playlist.uuid,
+                    name: playlist.title,
+                    trackCount: playlist.numberOfTracks
+                )
+            }
         }
     }
 
@@ -320,7 +316,7 @@ actor TIDALApiService {
 
         let request = try await authorizedRequest(url: url)
         let response: PagedResponse<TrackResponse> = try await perform(request)
-        return response.items.map { $0.toTrack() }
+        return await MainActor.run { response.items.map { $0.toTrack() } }
     }
 
     func search(query: String) async throws -> SearchResults {
@@ -342,8 +338,8 @@ actor TIDALApiService {
 
         let request = try await authorizedRequest(url: url)
         let searchResponse: SearchResponse = try await perform(request)
-        let tracks = (searchResponse.tracks?.items ?? []).map { $0.toTrack() }
-        let playlists = (searchResponse.playlists?.items ?? []).map { $0.toPlaylist() }
+        let tracks = await MainActor.run { (searchResponse.tracks?.items ?? []).map { $0.toTrack() } }
+        let playlists =  await MainActor.run { (searchResponse.playlists?.items ?? []).map { $0.toPlaylist() } }
         return SearchResults(tracks: tracks, playlists: playlists)
     }
 
@@ -362,6 +358,8 @@ actor TIDALApiService {
     }
 
     private func makeAuthorizationURL(using pkce: PKCE) throws -> URL {
+        // Do NOT add Authorization headers or tokens here. The authorize endpoint does not accept Bearer tokens;
+        // tokens are obtained later from the token endpoint and used for API requests.
         var components = URLComponents(url: configuration.authorizationURL, resolvingAgainstBaseURL: false)
         components?.queryItems = [
             URLQueryItem(name: "response_type", value: "code"),
@@ -406,7 +404,7 @@ actor TIDALApiService {
                     }
                 }
                 session.presentationContextProvider = presentationContextProvider
-                session.prefersEphemeralWebBrowserSession = true
+                session.prefersEphemeralWebBrowserSession = false
                 
                 await storeAuthSession(session)
 
@@ -430,7 +428,7 @@ actor TIDALApiService {
     }
 
     private func extractAuthorizationCode(from callbackURL: URL, expectedState: String) throws -> String {
-        guard var components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+        guard let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
               let queryItems = components.queryItems else {
             throw ServiceError.invalidCallbackURL
         }
@@ -454,6 +452,15 @@ actor TIDALApiService {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
 
+        if !configuration.clientSecret.isEmpty {
+            let creds = "\(configuration.clientID):\(configuration.clientSecret)"
+            if let data = creds.data(using: .utf8) {
+                let basic = data.base64EncodedString()
+                request.setValue("Basic \(basic)", forHTTPHeaderField: "Authorization")
+            }
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
         var bodyItems: [URLQueryItem] = [
             URLQueryItem(name: "grant_type", value: "authorization_code"),
             URLQueryItem(name: "code", value: code),
@@ -462,11 +469,7 @@ actor TIDALApiService {
             URLQueryItem(name: "code_verifier", value: pkce.verifier)
         ]
 
-        if !configuration.clientSecret.isEmpty {
-            bodyItems.append(URLQueryItem(name: "client_secret", value: configuration.clientSecret))
-        }
-
-        request.httpBody = bodyItems.percentEncoded()
+        request.httpBody = await bodyItems.percentEncoded()
 
         let response: TokenResponse = try await perform(request)
         guard let refreshToken = response.refreshToken ?? tokens?.refreshToken else {
@@ -496,15 +499,21 @@ actor TIDALApiService {
         var request = URLRequest(url: configuration.tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        if !configuration.clientSecret.isEmpty {
+            let creds = "\(configuration.clientID):\(configuration.clientSecret)"
+            if let data = creds.data(using: .utf8) {
+                let basic = data.base64EncodedString()
+                request.setValue("Basic \(basic)", forHTTPHeaderField: "Authorization")
+            }
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
         var bodyItems: [URLQueryItem] = [
             URLQueryItem(name: "grant_type", value: "refresh_token"),
             URLQueryItem(name: "refresh_token", value: tokens.refreshToken),
             URLQueryItem(name: "client_id", value: configuration.clientID)
         ]
-        if !configuration.clientSecret.isEmpty {
-            bodyItems.append(URLQueryItem(name: "client_secret", value: configuration.clientSecret))
-        }
-        request.httpBody = bodyItems.percentEncoded()
+        request.httpBody = await bodyItems.percentEncoded()
 
         let response: TokenResponse = try await perform(request)
         let expiresIn = max(response.expiresIn - 60, 0)
@@ -523,25 +532,85 @@ actor TIDALApiService {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("application/vnd.tidal.v1+json", forHTTPHeaderField: "Accept")
         return request
     }
 
     private func perform<T: Decodable>(_ request: URLRequest) async throws -> T {
         let (data, response) = try await urlSession.data(for: request)
+
+        #if DEBUG
+        if let url = request.url {
+            let method = request.httpMethod ?? "GET"
+            print("[TIDALApiService] Request: \(method) \(url.absoluteString)")
+        }
+        #endif
+
+        func decode<U: Decodable>(_ data: Data) throws -> U {
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(U.self, from: data)
+        }
+
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ServiceError.invalidResponse
         }
-        guard (200...299).contains(httpResponse.statusCode) else {
-            if httpResponse.statusCode == 401 {
-                tokens = nil
+
+        // Success path
+        if (200...299).contains(httpResponse.statusCode) {
+            #if DEBUG
+            if let url = request.url {
+                print("[TIDALApiService] Response: 2xx for \(url.absoluteString)")
             }
-            throw ServiceError.invalidHTTPStatus(httpResponse.statusCode)
+            #endif
+            return try decode(data)
         }
 
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-        return try decoder.decode(T.self, from: data)
+        // If unauthorized and this was an authorized request, try a single refresh + retry
+        if httpResponse.statusCode == 401,
+           request.value(forHTTPHeaderField: "Authorization") != nil,
+           tokens != nil {
+            do {
+                let newAccessToken = try await refreshAccessToken()
+                var retryRequest = request
+                retryRequest.setValue("Bearer \(newAccessToken)", forHTTPHeaderField: "Authorization")
+                let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
+                guard let retryHTTP = retryResponse as? HTTPURLResponse else {
+                    throw ServiceError.invalidResponse
+                }
+                #if DEBUG
+                if let url = retryRequest.url {
+                    print("[TIDALApiService] Retry Response: \(retryHTTP.statusCode) for \(url.absoluteString)")
+                }
+                #endif
+                guard (200...299).contains(retryHTTP.statusCode) else {
+                    if retryHTTP.statusCode == 401 { tokens = nil }
+                    throw ServiceError.invalidHTTPStatus(retryHTTP.statusCode)
+                }
+                return try decode(retryData)
+            } catch {
+                tokens = nil
+                throw ServiceError.invalidHTTPStatus(401)
+            }
+        }
+
+        // For other error statuses, try to surface token endpoint errors if present
+        if let contentType = httpResponse.value(forHTTPHeaderField: "Content-Type"),
+           contentType.contains("application/json"),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let description = (json["error_description"] as? String) ?? (json["message"] as? String) {
+            throw NSError(domain: "com.tidaldj.api", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: description])
+        }
+
+        #if DEBUG
+        if let url = request.url {
+            let bodySnippet = String(data: data.prefix(256), encoding: .utf8) ?? "<non-utf8>"
+            print("[TIDALApiService] Error Response: \(httpResponse.statusCode) for \(url.absoluteString) body: \(bodySnippet)")
+        }
+        #endif
+
+        if httpResponse.statusCode == 401 { tokens = nil }
+        throw ServiceError.invalidHTTPStatus(httpResponse.statusCode)
     }
 
     private func fetchCurrentUserProfile() async throws -> UserProfile {
@@ -583,7 +652,7 @@ actor TIDALApiService {
         if let code = profile.countryCode, !code.isEmpty {
             return code
         }
-        return Locale.current.regionCode
+        return Locale.current.region?.identifier
     }
 }
 
